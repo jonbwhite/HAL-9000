@@ -1,8 +1,9 @@
 # ABOUTME: PydanticAI agent configuration
 # ABOUTME: Sets up Claude agent with message fetching capabilities
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic import BaseModel, ConfigDict
 from typing import List
 import discord
@@ -15,8 +16,9 @@ class AgentContext(BaseModel):
     question: str
     channel_id: int
     channel_name: str
+    server_id: int
+    server_name: str
     user_name: str
-    guild_name: str
 
 
 class AgentDependencies(BaseModel):
@@ -29,20 +31,23 @@ class AgentDependencies(BaseModel):
 # System prompt for the agent
 SYSTEM_PROMPT = """You are a helpful productivity assistant for a Discord server.
 
-Your role is to answer questions about messages in Discord channels. You have access to a tool
-that can fetch message history from channels.
+Your role is to answer questions about messages in Discord channels. You have access to tools
+that can fetch message history from channels and resolve channel names to IDs.
 
 When a user asks a question:
 1. Determine if you need to fetch messages to answer it
-2. Use the fetch_messages tool with appropriate parameters (channel_id, hours_back, limit)
-3. Analyze the messages and provide a clear, concise answer
-4. If the messages don't contain relevant information, say so clearly
+2. If the user mentions a channel by name, use the get_channel_id tool to resolve it
+3. Use the fetch_messages tool with appropriate parameters (channel_id, hours_back, limit)
+4. Analyze the messages and provide a clear, concise answer
+5. If the messages don't contain relevant information, say so clearly
 
 Guidelines:
 - Be helpful and conversational
 - Cite specific messages when relevant (e.g., "User X mentioned...")
 - If asked about timeframes, adjust the hours_back parameter accordingly
-- Default to the current channel unless the user specifies another
+- Users think in terms of channel names, not channel IDs
+- Default to the context channel (channel_id and channel_name are provided in context) unless the user specifies another
+- When a user specifies a different channel by name, use get_channel_id with the channel_name and server_id from context
 - Keep responses focused and relevant to the question"""
 
 
@@ -50,19 +55,54 @@ def create_productivity_agent() -> Agent:
     """Create and return the productivity agent instance."""
     settings = get_settings()
 
+    provider = AnthropicProvider(api_key=settings.anthropic_api_key)
     agent = Agent(
         model=AnthropicModel(
-            model_name='claude-3-5-sonnet-20241022',
-            api_key=settings.anthropic_api_key
+            model_name='claude-sonnet-4-5-20250929',
+            provider=provider
         ),
         system_prompt=SYSTEM_PROMPT,
         deps_type=AgentDependencies
     )
 
     @agent.tool
+    async def get_channel_id(
+        ctx: RunContext[AgentDependencies],
+        channel_name: str,
+        server_id: int
+    ) -> int:
+        """
+        Resolve a channel name to a channel ID within a server.
+
+        Args:
+            channel_name: The name of the channel to find (case-insensitive)
+            server_id: The server ID to search within (from context)
+
+        Returns:
+            The channel ID as an integer
+
+        Raises:
+            ValueError: If channel not found or server not accessible
+        """
+        guild = ctx.deps.discord_client.get_guild(server_id)
+        if not guild:
+            raise ValueError(f"Server {server_id} not found or not accessible")
+
+        # Search for channel with case-insensitive matching
+        channel = None
+        for ch in guild.channels:
+            if isinstance(ch, discord.TextChannel) and ch.name.lower() == channel_name.lower():
+                channel = ch
+                break
+
+        if not channel:
+            raise ValueError(f"Channel '{channel_name}' not found in server")
+
+        return channel.id
+
+    @agent.tool
     async def fetch_messages(
-        ctx: AgentContext,
-        deps: AgentDependencies,
+        ctx: RunContext[AgentDependencies],
         channel_id: int,
         hours_back: int = 24,
         limit: int | None = None
@@ -71,19 +111,23 @@ def create_productivity_agent() -> Agent:
         Fetch messages from a Discord channel.
 
         Args:
-            channel_id: The Discord channel ID to fetch from
+            channel_id: The Discord channel ID to fetch from (can be obtained from get_channel_id or from context)
             hours_back: How many hours of history to fetch (1-168)
             limit: Maximum messages to fetch (default from config)
 
         Returns:
             List of messages with author, timestamp, and content
+
+        Note:
+            Default to the context channel_id unless the user specifies another channel.
+            If the user specifies a channel by name, use get_channel_id first to resolve it.
         """
         params = FetchMessagesParams(
             channel_id=channel_id,
             hours_back=hours_back,
             limit=limit
         )
-        return await fetch_messages_tool(params, deps.discord_client)
+        return await fetch_messages_tool(params, ctx.deps.discord_client)
 
     return agent
 
@@ -110,18 +154,22 @@ async def run_agent(
         question=question,
         channel_id=channel.id,
         channel_name=channel.name,
+        server_id=channel.guild.id,
+        server_name=channel.guild.name,
         user_name=user.display_name,
-        guild_name=channel.guild.name
     )
 
     dependencies = AgentDependencies(discord_client=discord_client)
 
     agent = create_productivity_agent()
 
+    # Serialize context to JSON
+    context_json = context.model_dump_json()
+
     result = await agent.run(
-        question,
+        context_json,
         deps=dependencies,
         message_history=[]
     )
 
-    return result.data
+    return result.output
