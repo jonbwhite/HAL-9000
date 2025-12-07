@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     default_message_limit: int = 100
     default_time_window_hours: int = 24
     max_response_length: int = 2000
+    recent_context_minutes: int = 5
+    recent_context_limit: int = 10
 
     model_config = SettingsConfigDict(
         env_file='.env',

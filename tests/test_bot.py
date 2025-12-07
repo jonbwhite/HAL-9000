@@ -82,17 +82,33 @@ async def test_responds_to_mention(mock_client, mock_message, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_handles_empty_question(mock_client, mock_message):
-    """Bot should prompt for question if mention has no text."""
+async def test_handles_empty_question(mock_client, mock_message, monkeypatch):
+    """Bot should infer question from recent messages if mention has no text."""
+    monkeypatch.setenv('DISCORD_TOKEN', 'test_token')
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'test_key')
+
+    # Reset config singleton
+    import config
+    config._settings = None
+
     mock_message.content = f"<@{mock_client.user.id}>"
     mock_message.mentions = [mock_client.user]
 
-    with patch('bot.client', mock_client):
+    with patch('bot.client', mock_client), \
+         patch('bot.run_agent', new_callable=AsyncMock) as mock_agent:
+        mock_agent.return_value = "Based on recent messages, here's what I found..."
+
         await on_message(mock_message)
 
-    mock_message.channel.send.assert_called_once()
-    call_args = mock_message.channel.send.call_args[0][0]
-    assert "ask me a question" in call_args.lower()
+    # Should call agent with inference question
+    assert mock_agent.called
+    call_args = mock_agent.call_args
+    # call_args is a tuple of (args, kwargs)
+    args = call_args[0] if call_args else ()
+    if args:
+        question = args[0]  # First positional argument
+        assert "infer" in question.lower() or "recent messages" in question.lower()
+    assert mock_message.channel.send.called
 
 
 @pytest.mark.asyncio

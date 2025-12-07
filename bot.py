@@ -70,7 +70,8 @@ async def on_message(message: Message):
     """
     Handle incoming Discord messages.
 
-    Responds when bot is mentioned with a question.
+    Responds when bot is mentioned with a question. If mentioned without
+    an explicit question, infers the question from recent channel messages.
     """
     # Ignore messages from the bot itself
     if message.author == client.user:
@@ -86,9 +87,9 @@ async def on_message(message: Message):
         question = question.replace(f'<@{mention.id}>', '').replace(f'<@!{mention.id}>', '')
     question = question.strip()
 
+    # If no explicit question, try to infer from recent messages
     if not question:
-        await message.channel.send("Please ask me a question!")
-        return
+        question = "What is the user asking about based on the recent messages in this channel? Please infer the question from the conversation context."
 
     # Verify we're in a text channel
     if not isinstance(message.channel, discord.TextChannel):

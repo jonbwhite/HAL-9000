@@ -5,7 +5,8 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic import BaseModel, ConfigDict
-from typing import List
+from typing import List, Optional
+from datetime import datetime, timedelta, UTC
 import discord
 from config import get_settings
 from tools import fetch_messages_tool, FetchMessagesParams, MessageData
@@ -19,6 +20,7 @@ class AgentContext(BaseModel):
     server_id: int
     server_name: str
     user_name: str
+    recent_messages: Optional[List[MessageData]] = None
 
 
 class AgentDependencies(BaseModel):
@@ -34,15 +36,20 @@ SYSTEM_PROMPT = """You are a helpful productivity assistant for a Discord server
 Your role is to answer questions about messages in Discord channels. You have access to tools
 that can fetch message history from channels and resolve channel names to IDs.
 
+Recent messages from the current channel are automatically provided in the context (recent_messages field).
+This allows you to answer follow-up questions and maintain conversation context without needing to fetch messages.
+
 When a user asks a question:
-1. Determine if you need to fetch messages to answer it
-2. If the user mentions a channel by name, use the get_channel_id tool to resolve it
-3. Use the fetch_messages tool with appropriate parameters (channel_id, hours_back, limit)
-4. Analyze the messages and provide a clear, concise answer
-5. If the messages don't contain relevant information, say so clearly
+1. Check if the recent_messages in context contain relevant information
+2. If you need more history or messages from other channels, use the fetch_messages tool
+3. If the user mentions a channel by name, use the get_channel_id tool to resolve it
+4. Use the fetch_messages tool with appropriate parameters (channel_id, hours_back, limit) when needed
+5. Analyze the messages and provide a clear, concise answer
+6. If the messages don't contain relevant information, say so clearly
 
 Guidelines:
 - Be helpful and conversational
+- Use the recent_messages context when available to answer follow-up questions
 - Cite specific messages when relevant (e.g., "User X mentioned...")
 - If asked about timeframes, adjust the hours_back parameter accordingly
 - Users think in terms of channel names, not channel IDs
@@ -132,6 +139,48 @@ def create_productivity_agent() -> Agent:
     return agent
 
 
+async def fetch_recent_messages(
+    channel: discord.TextChannel,
+    minutes_back: int,
+    limit: int
+) -> List[MessageData]:
+    """
+    Fetch recent messages from a Discord channel for automatic context.
+
+    Args:
+        channel: Discord text channel to fetch from
+        minutes_back: How many minutes of history to fetch
+        limit: Maximum number of messages to return
+
+    Returns:
+        List of MessageData objects in chronological order (oldest first).
+        Returns empty list on any errors (graceful degradation).
+    """
+    try:
+        # Calculate time window
+        after_time = datetime.now(UTC) - timedelta(minutes=minutes_back)
+
+        # Fetch messages
+        messages = []
+        async for message in channel.history(
+            limit=limit,
+            after=after_time,
+            oldest_first=False
+        ):
+            # Include all messages including bot messages
+            messages.append(MessageData(
+                author=message.author.display_name,
+                timestamp=message.created_at,
+                content=message.content
+            ))
+
+        # Return in chronological order (oldest first)
+        return list(reversed(messages))
+    except Exception:
+        # Graceful degradation: return empty list on any error
+        return []
+
+
 async def run_agent(
     question: str,
     channel: discord.TextChannel,
@@ -150,6 +199,14 @@ async def run_agent(
     Returns:
         Agent's response as a string
     """
+    # Fetch recent messages for context
+    settings = get_settings()
+    recent_messages = await fetch_recent_messages(
+        channel=channel,
+        minutes_back=settings.recent_context_minutes,
+        limit=settings.recent_context_limit
+    )
+
     context = AgentContext(
         question=question,
         channel_id=channel.id,
@@ -157,6 +214,7 @@ async def run_agent(
         server_id=channel.guild.id,
         server_name=channel.guild.name,
         user_name=user.display_name,
+        recent_messages=recent_messages if recent_messages else None,
     )
 
     dependencies = AgentDependencies(discord_client=discord_client)

@@ -53,3 +53,27 @@ def test_settings_uses_custom_values(monkeypatch):
 
     assert settings.default_message_limit == 50
     assert settings.debug_channel_name == 'debug'
+
+
+def test_settings_recent_context_defaults(monkeypatch):
+    """Settings should have default values for recent context settings."""
+    monkeypatch.setenv('DISCORD_TOKEN', 'test_token')
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'test_key')
+
+    settings = Settings()
+
+    assert settings.recent_context_minutes == 5
+    assert settings.recent_context_limit == 10
+
+
+def test_settings_recent_context_custom_values(monkeypatch):
+    """Settings should use custom values for recent context when provided."""
+    monkeypatch.setenv('DISCORD_TOKEN', 'test_token')
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'test_key')
+    monkeypatch.setenv('RECENT_CONTEXT_MINUTES', '10')
+    monkeypatch.setenv('RECENT_CONTEXT_LIMIT', '20')
+
+    settings = Settings()
+
+    assert settings.recent_context_minutes == 10
+    assert settings.recent_context_limit == 20
