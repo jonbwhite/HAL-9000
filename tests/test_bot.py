@@ -148,24 +148,26 @@ async def test_send_error_message_to_debug_channel(monkeypatch):
     """Should send detailed error to debug channel if configured."""
     monkeypatch.setenv('DISCORD_TOKEN', 'test_token')
     monkeypatch.setenv('ANTHROPIC_API_KEY', 'test_key')
-    monkeypatch.setenv('DEBUG_CHANNEL_ID', '123456')
+    monkeypatch.setenv('DEBUG_CHANNEL_NAME', 'debug')
 
     # Reset config singleton to pick up new env vars
     import config
     config._settings = None
 
+    debug_channel = Mock(spec=discord.TextChannel)
+    debug_channel.send = AsyncMock()
+    debug_channel.name = 'debug'
+
+    guild = Mock(spec=discord.Guild)
+    guild.text_channels = [debug_channel]
+
     message = Mock(spec=discord.Message)
     message.channel = Mock(spec=discord.TextChannel)
     message.channel.send = AsyncMock()
     message.channel.mention = "#general"
+    message.channel.guild = guild
 
-    debug_channel = Mock(spec=discord.TextChannel)
-    debug_channel.send = AsyncMock()
-
-    mock_client = Mock()
-    mock_client.get_channel.return_value = debug_channel
-
-    with patch('bot.client', mock_client):
+    with patch('bot.client', Mock()):
         await send_error_message(
             message,
             "something went wrong",

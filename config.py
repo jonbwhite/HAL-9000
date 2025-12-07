@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str
 
     # Optional settings with defaults
-    debug_channel_id: Optional[int] = None
+    debug_channel_name: Optional[str] = None
     default_message_limit: int = 100
     default_time_window_hours: int = 24
     max_response_length: int = 2000
@@ -21,7 +21,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file='.env',
         env_file_encoding='utf-8',
-        case_sensitive=False
+        case_sensitive=False,
+        extra='ignore'
     )
 
 

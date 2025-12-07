@@ -47,9 +47,9 @@ def test_settings_uses_custom_values(monkeypatch):
     monkeypatch.setenv('DISCORD_TOKEN', 'test_token')
     monkeypatch.setenv('ANTHROPIC_API_KEY', 'test_key')
     monkeypatch.setenv('DEFAULT_MESSAGE_LIMIT', '50')
-    monkeypatch.setenv('DEBUG_CHANNEL_ID', '123456')
+    monkeypatch.setenv('DEBUG_CHANNEL_NAME', 'debug')
 
     settings = Settings()
 
     assert settings.default_message_limit == 50
-    assert settings.debug_channel_id == 123456
+    assert settings.debug_channel_name == 'debug'

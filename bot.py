@@ -40,10 +40,14 @@ async def send_error_message(
     await message.channel.send(f"Sorry, {error_text}")
 
     settings = get_settings()
-    if log_error and settings.debug_channel_id:
-        debug_channel = client.get_channel(settings.debug_channel_id)
-        if debug_channel:
-            await debug_channel.send(f"Error in {message.channel.mention}:\n```\n{log_error}\n```")
+    if log_error and settings.debug_channel_name:
+        if isinstance(message.channel, discord.TextChannel) and message.channel.guild:
+            debug_channel = discord.utils.get(
+                message.channel.guild.text_channels,
+                name=settings.debug_channel_name
+            )
+            if debug_channel:
+                await debug_channel.send(f"Error in {message.channel.mention}:\n```\n{log_error}\n```")
 
 
 async def send_chunked_response(channel: discord.TextChannel, response: str):
