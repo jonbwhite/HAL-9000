@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     recent_context_minutes: int = 5
     recent_context_limit: int = 10
 
+    # Langfuse observability settings (optional)
+    langfuse_public_key: Optional[str] = None
+    langfuse_secret_key: Optional[str] = None
+    langfuse_host: str = "https://us.cloud.langfuse.com"
+
     model_config = SettingsConfigDict(
         env_file='.env',
         env_file_encoding='utf-8',

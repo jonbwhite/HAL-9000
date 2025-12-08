@@ -9,6 +9,7 @@ from discord import Message
 from config import get_settings
 from agent import run_agent
 from utils import chunk_message
+from instrumentation import initialize_instrumentation
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -141,6 +142,9 @@ def main():
     token = settings.discord_token
     if not token:
         raise ValueError('DISCORD_TOKEN not found in environment variables')
+
+    # Initialize OpenTelemetry instrumentation for Langfuse
+    initialize_instrumentation(settings)
 
     print("Starting Discord bot...")
     client.run(token)

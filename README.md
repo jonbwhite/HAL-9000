@@ -66,6 +66,27 @@ An AI-powered Discord bot that answers questions about channel message history u
    - `DEFAULT_TIME_WINDOW_HOURS`: Default hours to look back (default: 24)
    - `MAX_RESPONSE_LENGTH`: Max message length before chunking (default: 2000)
 
+### Langfuse Observability (Optional)
+
+HAL-9000 supports observability through Langfuse for tracking AI agent performance, tool usage, and costs.
+
+**Setup**:
+1. Create a Langfuse Cloud account at https://cloud.langfuse.com
+2. Get your public and secret keys from the dashboard
+3. Add to your `.env` file:
+   ```
+   LANGFUSE_PUBLIC_KEY=pk-lf-your_public_key_here
+   LANGFUSE_SECRET_KEY=sk-lf-your_secret_key_here
+   LANGFUSE_HOST=https://us.cloud.langfuse.com
+   ```
+
+**What's Traced**:
+- All agent runs (inputs, outputs, timing, token usage)
+- Tool calls (get_channel_id, fetch_messages) with parameters
+- Errors and exceptions
+
+If Langfuse credentials are not configured, the bot runs normally without observability.
+
 ### Running
 
 ```bash

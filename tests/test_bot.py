@@ -4,7 +4,7 @@
 import pytest
 from unittest.mock import Mock, AsyncMock, patch, MagicMock
 import discord
-from bot import on_message, send_error_message, send_chunked_response
+from bot import on_message, send_error_message, send_chunked_response, main
 
 
 @pytest.fixture
@@ -191,3 +191,22 @@ async def test_send_error_message_to_debug_channel(monkeypatch):
         )
 
     assert debug_channel.send.called
+
+
+@patch('bot.initialize_instrumentation')
+@patch('bot.get_settings')
+@patch('bot.client')
+def test_main_initializes_instrumentation(mock_client, mock_get_settings, mock_init_instrumentation):
+    """Test that main() initializes instrumentation before starting bot."""
+    mock_settings = MagicMock()
+    mock_settings.discord_token = "test_token"
+    mock_get_settings.return_value = mock_settings
+    mock_client.run = Mock()
+
+    main()
+
+    # Verify instrumentation was initialized
+    mock_init_instrumentation.assert_called_once_with(mock_settings)
+
+    # Verify bot was started after instrumentation
+    mock_client.run.assert_called_once_with("test_token")
