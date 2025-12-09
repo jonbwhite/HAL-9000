@@ -97,7 +97,12 @@ def test_langfuse_settings_optional(monkeypatch):
     monkeypatch.delenv('LANGFUSE_PUBLIC_KEY', raising=False)
     monkeypatch.delenv('LANGFUSE_SECRET_KEY', raising=False)
 
-    settings = Settings()
+    # Reset config singleton
+    import config
+    config._settings = None
+
+    # Prevent reading from .env file
+    settings = Settings(_env_file='nonexistent.env')
 
     assert settings.langfuse_public_key is None
     assert settings.langfuse_secret_key is None

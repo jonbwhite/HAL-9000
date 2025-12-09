@@ -1,6 +1,10 @@
 # ABOUTME: Discord bot entry point
 # ABOUTME: Handles message events and coordinates with AI agent
 
+# Load .env file into environment variables before anything else
+from dotenv import load_dotenv
+load_dotenv()
+
 import os
 import asyncio
 from typing import Optional

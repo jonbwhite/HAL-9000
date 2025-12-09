@@ -69,7 +69,8 @@ def create_productivity_agent() -> Agent:
             provider=provider
         ),
         system_prompt=SYSTEM_PROMPT,
-        deps_type=AgentDependencies
+        deps_type=AgentDependencies,
+        instrument=True
     )
 
     @agent.tool

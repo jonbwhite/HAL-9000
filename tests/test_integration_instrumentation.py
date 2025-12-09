@@ -9,9 +9,15 @@ from instrumentation import initialize_instrumentation
 
 
 @pytest.mark.asyncio
-@patch('opentelemetry.trace.set_tracer_provider')
-async def test_agent_runs_with_instrumentation_enabled(mock_set_tracer):
+@patch('instrumentation.Agent.instrument_all')
+@patch('instrumentation.get_client')
+async def test_agent_runs_with_instrumentation_enabled(mock_get_client, mock_instrument_all):
     """Test that agent runs successfully with instrumentation enabled."""
+    # Mock Langfuse client to return auth success
+    mock_langfuse = MagicMock()
+    mock_langfuse.auth_check.return_value = True
+    mock_get_client.return_value = mock_langfuse
+
     # Configure with Langfuse settings
     settings = Settings(
         discord_token="test",
@@ -23,8 +29,10 @@ async def test_agent_runs_with_instrumentation_enabled(mock_set_tracer):
     # Initialize instrumentation
     initialize_instrumentation(settings)
 
-    # Verify tracer provider was set
-    assert mock_set_tracer.called
+    # Verify auth_check was called
+    assert mock_langfuse.auth_check.called
+    # Verify Agent.instrument_all was called
+    assert mock_instrument_all.called
 
     # Create agent - should work with instrumentation
     agent = create_productivity_agent()
@@ -32,8 +40,14 @@ async def test_agent_runs_with_instrumentation_enabled(mock_set_tracer):
 
 
 @pytest.mark.asyncio
-async def test_agent_runs_without_instrumentation():
+@patch('instrumentation.get_client')
+async def test_agent_runs_without_instrumentation(mock_get_client):
     """Test that agent runs successfully without Langfuse configured."""
+    # Mock Langfuse client to return auth failure
+    mock_langfuse = MagicMock()
+    mock_langfuse.auth_check.return_value = False
+    mock_get_client.return_value = mock_langfuse
+
     # No Langfuse settings
     settings = Settings(
         discord_token="test",

@@ -1,4 +1,4 @@
-# ABOUTME: Tests for Langfuse OpenTelemetry instrumentation
+# ABOUTME: Tests for Langfuse instrumentation via Langfuse SDK
 # ABOUTME: Validates instrumentation setup and configuration
 
 import pytest
@@ -7,11 +7,15 @@ from instrumentation import initialize_instrumentation, is_langfuse_configured
 from config import Settings
 
 
-def test_is_langfuse_configured_returns_false_when_missing_keys():
+def test_is_langfuse_configured_returns_false_when_missing_keys(monkeypatch):
     """Test that Langfuse is not configured without keys."""
+    monkeypatch.delenv('LANGFUSE_PUBLIC_KEY', raising=False)
+    monkeypatch.delenv('LANGFUSE_SECRET_KEY', raising=False)
+
     settings = Settings(
         discord_token="test",
-        anthropic_api_key="test"
+        anthropic_api_key="test",
+        _env_file='nonexistent.env'
     )
     assert is_langfuse_configured(settings) is False
 
@@ -27,13 +31,17 @@ def test_is_langfuse_configured_returns_true_with_keys():
     assert is_langfuse_configured(settings) is True
 
 
-def test_is_langfuse_configured_requires_both_keys():
+def test_is_langfuse_configured_requires_both_keys(monkeypatch):
     """Test that both keys are required."""
+    monkeypatch.delenv('LANGFUSE_PUBLIC_KEY', raising=False)
+    monkeypatch.delenv('LANGFUSE_SECRET_KEY', raising=False)
+
     # Only public key
     settings = Settings(
         discord_token="test",
         anthropic_api_key="test",
-        langfuse_public_key="pk-test"
+        langfuse_public_key="pk-test",
+        _env_file='nonexistent.env'
     )
     assert is_langfuse_configured(settings) is False
 
@@ -41,51 +49,52 @@ def test_is_langfuse_configured_requires_both_keys():
     settings = Settings(
         discord_token="test",
         anthropic_api_key="test",
-        langfuse_secret_key="sk-test"
+        langfuse_secret_key="sk-test",
+        _env_file='nonexistent.env'
     )
     assert is_langfuse_configured(settings) is False
 
 
 @patch('instrumentation.Agent')
-def test_initialize_instrumentation_skips_when_not_configured(mock_agent):
+@patch('instrumentation.get_client')
+def test_initialize_instrumentation_skips_when_not_configured(mock_get_client, mock_agent):
     """Test that instrumentation is skipped when Langfuse not configured."""
+    # Mock Langfuse client to return auth failure
+    mock_langfuse = MagicMock()
+    mock_langfuse.auth_check.return_value = False
+    mock_get_client.return_value = mock_langfuse
+
     settings = Settings(
         discord_token="test",
         anthropic_api_key="test"
     )
     initialize_instrumentation(settings)
+
+    # Verify auth_check was called
+    mock_langfuse.auth_check.assert_called_once()
+    # Verify Agent.instrument_all was NOT called when auth fails
     mock_agent.instrument_all.assert_not_called()
 
 
 @patch('instrumentation.Agent')
-@patch('instrumentation.OTLPSpanExporter')
-@patch('instrumentation.BatchSpanProcessor')
-@patch('instrumentation.TracerProvider')
-def test_initialize_instrumentation_configures_langfuse(
-    mock_tracer_provider,
-    mock_batch_processor,
-    mock_otlp_exporter,
-    mock_agent
-):
-    """Test that instrumentation is configured with Langfuse settings."""
+@patch('instrumentation.get_client')
+def test_initialize_instrumentation_configures_langfuse(mock_get_client, mock_agent):
+    """Test that instrumentation is configured when Langfuse auth succeeds."""
+    # Mock Langfuse client to return auth success
+    mock_langfuse = MagicMock()
+    mock_langfuse.auth_check.return_value = True
+    mock_get_client.return_value = mock_langfuse
+
     settings = Settings(
         discord_token="test",
         anthropic_api_key="test",
         langfuse_public_key="pk-test",
-        langfuse_secret_key="sk-test",
-        langfuse_host="https://us.cloud.langfuse.com"
+        langfuse_secret_key="sk-test"
     )
 
     initialize_instrumentation(settings)
 
-    # Verify OTLP exporter was created with correct endpoint and auth
-    mock_otlp_exporter.assert_called_once()
-    call_kwargs = mock_otlp_exporter.call_args.kwargs
-    assert call_kwargs['endpoint'] == "https://us.cloud.langfuse.com/api/public/otel/v1/traces"
-    assert 'Authorization' in call_kwargs['headers']
-
-    # Verify TracerProvider was set up
-    mock_tracer_provider.assert_called_once()
-
+    # Verify auth_check was called
+    mock_langfuse.auth_check.assert_called_once()
     # Verify Agent.instrument_all was called
     mock_agent.instrument_all.assert_called_once()

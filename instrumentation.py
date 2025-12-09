@@ -9,6 +9,8 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from pydantic_ai import Agent
 from config import Settings
+from langfuse import get_client
+
 
 
 def is_langfuse_configured(settings: Settings) -> bool:
@@ -42,32 +44,13 @@ def initialize_instrumentation(settings: Settings) -> None:
     Args:
         settings: Application settings containing Langfuse credentials
     """
-    if not is_langfuse_configured(settings):
+    langfuse = get_client()
+    if not langfuse.auth_check():
         print("Langfuse not configured - skipping instrumentation")
         return
 
     print("Initializing Langfuse instrumentation...")
 
-    # Create Basic Auth header: base64(public_key:secret_key)
-    credentials = f"{settings.langfuse_public_key}:{settings.langfuse_secret_key}"
-    auth_header = base64.b64encode(credentials.encode()).decode()
-
-    # Configure OTLP exporter for Langfuse
-    endpoint = f"{settings.langfuse_host}/api/public/otel/v1/traces"
-    exporter = OTLPSpanExporter(
-        endpoint=endpoint,
-        headers={
-            "Authorization": f"Basic {auth_header}"
-        }
-    )
-
-    # Set up TracerProvider with batch processor
-    provider = TracerProvider()
-    processor = BatchSpanProcessor(exporter)
-    provider.add_span_processor(processor)
-    trace.set_tracer_provider(provider)
-
-    # Instrument all PydanticAI agents
     Agent.instrument_all()
 
-    print(f"Langfuse instrumentation initialized (endpoint: {endpoint})")
+    print(f"Langfuse instrumentation initialized")
