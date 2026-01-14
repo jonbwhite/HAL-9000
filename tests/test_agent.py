@@ -120,13 +120,15 @@ async def test_run_agent_calls_agent_correctly(mock_fetch_recent, mock_create_ag
     mock_agent = Mock()
     mock_result = Mock()
     mock_result.output = "Here's what I found..."
+    mock_result.new_messages = Mock(return_value=[])
     mock_agent.run = AsyncMock(return_value=mock_result)
     mock_create_agent.return_value = mock_agent
 
     question = "What did we discuss about the project?"
-    response = await run_agent(question, channel, user, client)
+    response, new_messages = await run_agent(question, channel, user, client)
 
     assert response == "Here's what I found..."
+    assert new_messages == []
     assert mock_agent.run.called
     assert mock_fetch_recent.called
 
@@ -175,14 +177,16 @@ async def test_run_agent_handles_fetch_error_gracefully(mock_fetch_recent, mock_
     mock_agent = Mock()
     mock_result = Mock()
     mock_result.output = "Response"
+    mock_result.new_messages = Mock(return_value=[])
     mock_agent.run = AsyncMock(return_value=mock_result)
     mock_create_agent.return_value = mock_agent
 
     question = "Test question"
-    response = await run_agent(question, channel, user, client)
+    response, new_messages = await run_agent(question, channel, user, client)
 
     # Should still succeed
     assert response == "Response"
+    assert new_messages == []
     assert mock_agent.run.called
 
     # Verify context has None for recent_messages when empty

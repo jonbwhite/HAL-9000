@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     recent_context_minutes: int = 5
     recent_context_limit: int = 10
 
+    # Conversation settings
+    conversation_timeout_seconds: int = 120
+
     # Langfuse observability settings (optional)
     langfuse_public_key: Optional[str] = None
     langfuse_secret_key: Optional[str] = None

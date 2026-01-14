@@ -71,9 +71,12 @@ async def test_responds_to_mention(mock_client, mock_message, monkeypatch):
     mock_message.content = f"<@{mock_client.user.id}> What did we discuss?"
     mock_message.mentions = [mock_client.user]
 
+    # Setup mock for guild.text_channels to avoid iteration error
+    mock_message.channel.guild.text_channels = []
+
     with patch('bot.client', mock_client), \
          patch('bot.run_agent', new_callable=AsyncMock) as mock_agent:
-        mock_agent.return_value = "Here's what I found..."
+        mock_agent.return_value = ("Here's what I found...", [])
 
         await on_message(mock_message)
 
@@ -94,9 +97,12 @@ async def test_handles_empty_question(mock_client, mock_message, monkeypatch):
     mock_message.content = f"<@{mock_client.user.id}>"
     mock_message.mentions = [mock_client.user]
 
+    # Setup mock for guild.text_channels to avoid iteration error
+    mock_message.channel.guild.text_channels = []
+
     with patch('bot.client', mock_client), \
          patch('bot.run_agent', new_callable=AsyncMock) as mock_agent:
-        mock_agent.return_value = "Based on recent messages, here's what I found..."
+        mock_agent.return_value = ("Based on recent messages, here's what I found...", [])
 
         await on_message(mock_message)
 

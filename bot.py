@@ -14,12 +14,21 @@ from config import get_settings
 from agent import run_agent
 from utils import chunk_message
 from instrumentation import initialize_instrumentation
+from conversation import ConversationManager, ResponseDecider, MessageRecord
+from datetime import datetime, timezone
 
 intents = discord.Intents.default()
 intents.message_content = True
 intents.guilds = True
 
 client = discord.Client(intents=intents)
+
+# Initialize conversation management
+settings = get_settings()
+conversation_manager = ConversationManager(
+    timeout_seconds=settings.conversation_timeout_seconds
+)
+response_decider = ResponseDecider()
 
 
 @client.event
@@ -70,74 +79,211 @@ async def send_chunked_response(channel: discord.TextChannel, response: str):
         await channel.send(chunk)
 
 
+async def load_recent_messages_for_conversation(
+    channel: discord.TextChannel,
+    limit: int = 20
+) -> list[MessageRecord]:
+    """
+    Load recent messages from channel to initialize conversation context.
+    
+    Args:
+        channel: Discord text channel
+        limit: Maximum number of messages to load
+        
+    Returns:
+        List of MessageRecord objects
+    """
+    messages = []
+    try:
+        async for msg in channel.history(limit=limit, oldest_first=False):
+            # Skip bot's own messages
+            if msg.author == client.user:
+                continue
+            
+            messages.append(MessageRecord(
+                author=msg.author.display_name,
+                author_id=msg.author.id,
+                content=msg.content,
+                timestamp=msg.created_at,
+                is_bot=msg.author.bot
+            ))
+    except Exception:
+        # Graceful degradation: return what we have
+        pass
+    
+    # Return in chronological order (oldest first)
+    return list(reversed(messages))
+
+
 @client.event
 async def on_message(message: Message):
     """
     Handle incoming Discord messages.
 
-    Responds when bot is mentioned with a question. If mentioned without
-    an explicit question, infers the question from recent channel messages.
+    Implements conversation-based message flow:
+    1. Filter out bot's own messages
+    2. Check for active conversation or should start one
+    3. Record message and decide if bot should respond
     """
-    # Ignore messages from the bot itself
+    # Filter out bot's own messages before any processing
     if message.author == client.user:
         return
 
-    # Check if bot is mentioned
-    if client.user not in message.mentions:
-        return
-
-    # Extract question (remove bot mention)
-    question = message.content
-    for mention in message.mentions:
-        question = question.replace(f'<@{mention.id}>', '').replace(f'<@!{mention.id}>', '')
-    question = question.strip()
-
-    # If no explicit question, try to infer from recent messages
-    if not question:
-        question = "What is the user asking about based on the recent messages in this channel? Please infer the question from the conversation context."
-
     # Verify we're in a text channel
     if not isinstance(message.channel, discord.TextChannel):
-        await message.channel.send("I can only answer questions in text channels.")
         return
 
-    # Show typing indicator while processing
-    async with message.channel.typing():
-        try:
-            # Run the AI agent
-            response = await run_agent(
-                question=question,
-                channel=message.channel,
-                user=message.author,
-                discord_client=client
+    channel_id = message.channel.id
+    bot_user_id = client.user.id if client.user else 0
+
+    # Check if there's an active conversation
+    conversation = conversation_manager.get(channel_id)
+
+    if conversation:
+        # Active conversation exists - record message and check if should respond
+        message_record = MessageRecord(
+            author=message.author.display_name,
+            author_id=message.author.id,
+            content=message.content,
+            timestamp=message.created_at,
+            is_bot=message.author.bot
+        )
+        conversation_manager.record_message(channel_id, message_record)
+
+        should_respond, reason = response_decider.should_respond(
+            message, conversation, bot_user_id
+        )
+
+        if should_respond:
+            # Extract question (remove bot mention if present)
+            question = message.content
+            for mention in message.mentions:
+                question = question.replace(f'<@{mention.id}>', '').replace(f'<@!{mention.id}>', '')
+            question = question.strip()
+
+            if not question:
+                question = "What is the user asking about based on the recent messages in this channel? Please infer the question from the conversation context."
+
+            # Show typing indicator while processing
+            async with message.channel.typing():
+                try:
+                    # Run the AI agent with conversation context
+                    response, new_messages = await run_agent(
+                        question=question,
+                        channel=message.channel,
+                        user=message.author,
+                        discord_client=client,
+                        conversation=conversation
+                    )
+
+                    # Send response (chunked if needed)
+                    await send_chunked_response(message.channel, response)
+
+                    # Record bot response in conversation
+                    if conversation:
+                        # Append new messages to existing history
+                        updated_history = conversation.llm_history + new_messages
+                        conversation_manager.record_bot_response(channel_id, updated_history)
+
+                except ValueError as e:
+                    await send_error_message(
+                        message,
+                        error_text=str(e),
+                        log_error=f"ValueError: {e}\nQuestion: {question}\nUser: {message.author}"
+                    )
+
+                except Exception as e:
+                    error_msg = f"I encountered an error processing your question."
+                    log_msg = f"Unexpected error:\n{type(e).__name__}: {e}\nQuestion: {question}\nUser: {message.author}"
+
+                    await send_error_message(
+                        message,
+                        error_text=error_msg,
+                        log_error=log_msg
+                    )
+
+                    print(f"Error: {e}")
+                    import traceback
+                    traceback.print_exc()
+    else:
+        # No active conversation - check if should start one
+        should_start, reason = response_decider.should_start_conversation(
+            message, bot_user_id
+        )
+
+        if should_start:
+            # Load recent messages and start conversation
+            recent_messages = await load_recent_messages_for_conversation(
+                message.channel
             )
 
-            # Send response (chunked if needed)
-            await send_chunked_response(message.channel, response)
-
-        except ValueError as e:
-            # User-facing errors (channel not found, etc.)
-            await send_error_message(
-                message,
-                error_text=str(e),
-                log_error=f"ValueError: {e}\nQuestion: {question}\nUser: {message.author}"
+            # Add current message
+            message_record = MessageRecord(
+                author=message.author.display_name,
+                author_id=message.author.id,
+                content=message.content,
+                timestamp=message.created_at,
+                is_bot=message.author.bot
             )
+            recent_messages.append(message_record)
 
-        except Exception as e:
-            # Unexpected errors
-            error_msg = f"I encountered an error processing your question."
-            log_msg = f"Unexpected error:\n{type(e).__name__}: {e}\nQuestion: {question}\nUser: {message.author}"
+            conversation = conversation_manager.start(channel_id, recent_messages)
 
-            await send_error_message(
-                message,
-                error_text=error_msg,
-                log_error=log_msg
-            )
+            # Extract question (remove bot mention if present)
+            question = message.content
+            for mention in message.mentions:
+                question = question.replace(f'<@{mention.id}>', '').replace(f'<@!{mention.id}>', '')
+            question = question.strip()
 
-            # Also print to console for local debugging
-            print(f"Error: {e}")
-            import traceback
-            traceback.print_exc()
+            if not question:
+                question = "What is the user asking about based on the recent messages in this channel? Please infer the question from the conversation context."
+
+            # Show typing indicator while processing
+            async with message.channel.typing():
+                try:
+                    # Run the AI agent with conversation context
+                    response, new_messages = await run_agent(
+                        question=question,
+                        channel=message.channel,
+                        user=message.author,
+                        discord_client=client,
+                        conversation=conversation
+                    )
+
+                    # Send response (chunked if needed)
+                    await send_chunked_response(message.channel, response)
+
+                    # Record bot response in conversation
+                    if conversation:
+                        # Append new messages to existing history
+                        updated_history = conversation.llm_history + new_messages
+                        conversation_manager.record_bot_response(channel_id, updated_history)
+
+                except ValueError as e:
+                    await send_error_message(
+                        message,
+                        error_text=str(e),
+                        log_error=f"ValueError: {e}\nQuestion: {question}\nUser: {message.author}"
+                    )
+
+                except Exception as e:
+                    error_msg = f"I encountered an error processing your question."
+                    log_msg = f"Unexpected error:\n{type(e).__name__}: {e}\nQuestion: {question}\nUser: {message.author}"
+
+                    await send_error_message(
+                        message,
+                        error_text=error_msg,
+                        log_error=log_msg
+                    )
+
+                    print(f"Error: {e}")
+                    import traceback
+                    traceback.print_exc()
+        else:
+            # No trigger to start conversation - just record message if conversation exists
+            # (This shouldn't happen since we checked for active conversation above,
+            # but keeping for safety)
+            pass
 
 
 def main():

@@ -10,6 +10,8 @@ from datetime import datetime, timedelta, UTC
 import discord
 from config import get_settings
 from tools import fetch_messages_tool, FetchMessagesParams, MessageData
+from conversation import ChannelConversation
+from typing import Optional
 
 
 class AgentContext(BaseModel):
@@ -186,8 +188,9 @@ async def run_agent(
     question: str,
     channel: discord.TextChannel,
     user: discord.User,
-    discord_client: discord.Client
-) -> str:
+    discord_client: discord.Client,
+    conversation: Optional[ChannelConversation] = None
+) -> tuple[str, list]:
     """
     Run the productivity agent with a user's question.
 
@@ -196,17 +199,30 @@ async def run_agent(
         channel: Discord channel where question was asked
         user: Discord user who asked
         discord_client: Discord client for fetching messages
+        conversation: Optional active conversation context
 
     Returns:
         Agent's response as a string
     """
-    # Fetch recent messages for context
-    settings = get_settings()
-    recent_messages = await fetch_recent_messages(
-        channel=channel,
-        minutes_back=settings.recent_context_minutes,
-        limit=settings.recent_context_limit
-    )
+    # Use conversation messages if available, otherwise fetch recent messages
+    if conversation and conversation.messages:
+        # Convert MessageRecord to MessageData for context
+        recent_messages = [
+            MessageData(
+                author=msg.author,
+                timestamp=msg.timestamp,
+                content=msg.content
+            )
+            for msg in conversation.messages
+        ]
+    else:
+        # Fallback: fetch recent messages for context
+        settings = get_settings()
+        recent_messages = await fetch_recent_messages(
+            channel=channel,
+            minutes_back=settings.recent_context_minutes,
+            limit=settings.recent_context_limit
+        )
 
     context = AgentContext(
         question=question,
@@ -225,10 +241,16 @@ async def run_agent(
     # Serialize context to JSON
     context_json = context.model_dump_json()
 
+    # Use conversation's LLM history if available
+    message_history = conversation.llm_history if conversation else []
+
     result = await agent.run(
         context_json,
         deps=dependencies,
-        message_history=[]
+        message_history=message_history
     )
 
-    return result.output
+    # Get new messages from this run for conversation history
+    new_messages = result.new_messages()
+
+    return result.output, new_messages
