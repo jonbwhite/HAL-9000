@@ -22,6 +22,7 @@ class Settings(BaseSettings):
 
     # Conversation settings
     conversation_timeout_seconds: int = 120
+    followup_window_seconds: int = 60  # How long after bot speaks to consider followups
 
     # Langfuse observability settings (optional)
     langfuse_public_key: Optional[str] = None

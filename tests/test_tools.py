@@ -33,6 +33,7 @@ def mock_messages():
         msg = Mock(spec=discord.Message)
         msg.author = Mock()
         msg.author.display_name = f"User{i}"
+        msg.author.id = 1000 + i
         msg.author.bot = False
         msg.content = f"Test message {i}"
         msg.created_at = base_time + timedelta(minutes=i*10)
@@ -97,6 +98,7 @@ async def test_fetch_messages_filters_bots(mock_discord_client, mock_text_channe
         msg = Mock(spec=discord.Message)
         msg.author = Mock()
         msg.author.display_name = f"User{i}"
+        msg.author.id = 1000 + i
         msg.author.bot = i == 1  # Middle message is from bot
         msg.content = f"Message {i}"
         msg.created_at = datetime.now(UTC)

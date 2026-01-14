@@ -8,6 +8,8 @@ import json
 from datetime import datetime
 from agent import run_agent, AgentContext, AgentDependencies
 from tools import MessageData
+from conversation import ChannelConversation
+from datetime import datetime, timezone
 
 
 @pytest.fixture
@@ -61,8 +63,10 @@ async def test_agent_context_with_recent_messages(mock_discord_objects):
     recent_msgs = [
         MessageData(
             author="User1",
+            author_id=123,
             timestamp=datetime.now(),
-            content="Previous message"
+            content="Previous message",
+            is_bot=False
         )
     ]
 
@@ -94,8 +98,7 @@ async def test_agent_dependencies_accepts_client(mock_discord_objects):
 # In practice, you'd mock the agent.run() call or test with recorded responses
 @pytest.mark.asyncio
 @patch('agent.create_productivity_agent')
-@patch('agent.fetch_recent_messages')
-async def test_run_agent_calls_agent_correctly(mock_fetch_recent, mock_create_agent, mock_discord_objects, monkeypatch):
+async def test_run_agent_calls_agent_correctly(mock_create_agent, mock_discord_objects, monkeypatch):
     """run_agent should call pydanticai agent with correct parameters."""
     monkeypatch.setenv('DISCORD_TOKEN', 'test_token')
     monkeypatch.setenv('ANTHROPIC_API_KEY', 'test_key')
@@ -106,15 +109,24 @@ async def test_run_agent_calls_agent_correctly(mock_fetch_recent, mock_create_ag
 
     client, channel, user = mock_discord_objects
 
-    # Mock recent messages
+    # Create conversation with messages
     mock_recent_msgs = [
         MessageData(
             author="User1",
-            timestamp=datetime.now(),
-            content="Recent message"
+            author_id=123,
+            timestamp=datetime.now(timezone.utc),
+            content="Recent message",
+            is_bot=False
         )
     ]
-    mock_fetch_recent.return_value = mock_recent_msgs
+    conversation = ChannelConversation(
+        channel_id=channel.id,
+        started_at=datetime.now(timezone.utc),
+        last_activity=datetime.now(timezone.utc),
+        messages=mock_recent_msgs,
+        llm_history=[],
+        participants=set()
+    )
 
     # Mock the agent and its run method
     mock_agent = Mock()
@@ -125,18 +137,11 @@ async def test_run_agent_calls_agent_correctly(mock_fetch_recent, mock_create_ag
     mock_create_agent.return_value = mock_agent
 
     question = "What did we discuss about the project?"
-    response, new_messages = await run_agent(question, channel, user, client)
+    response, new_messages = await run_agent(question, channel, user, client, conversation)
 
     assert response == "Here's what I found..."
     assert new_messages == []
     assert mock_agent.run.called
-    assert mock_fetch_recent.called
-
-    # Verify fetch_recent_messages was called with correct parameters
-    fetch_call_args = mock_fetch_recent.call_args
-    assert fetch_call_args[1]['channel'] == channel
-    assert fetch_call_args[1]['minutes_back'] == 5  # default
-    assert fetch_call_args[1]['limit'] == 10  # default
 
     # Verify the agent was called with JSON context
     call_args = mock_agent.run.call_args
@@ -150,7 +155,7 @@ async def test_run_agent_calls_agent_correctly(mock_fetch_recent, mock_create_ag
     assert context_data["server_id"] == 987654321
     assert context_data["user_name"] == "TestUser"
     assert context_data["server_name"] == "Test Server"
-    # recent_messages should be present and contain the mocked messages
+    # recent_messages should be present and contain the conversation messages
     assert "recent_messages" in context_data
     assert context_data["recent_messages"] is not None
     assert len(context_data["recent_messages"]) == 1
@@ -158,9 +163,8 @@ async def test_run_agent_calls_agent_correctly(mock_fetch_recent, mock_create_ag
 
 @pytest.mark.asyncio
 @patch('agent.create_productivity_agent')
-@patch('agent.fetch_recent_messages')
-async def test_run_agent_handles_fetch_error_gracefully(mock_fetch_recent, mock_create_agent, mock_discord_objects, monkeypatch):
-    """run_agent should continue even if fetch_recent_messages fails."""
+async def test_run_agent_handles_empty_conversation(mock_create_agent, mock_discord_objects, monkeypatch):
+    """run_agent should work with empty conversation messages."""
     monkeypatch.setenv('DISCORD_TOKEN', 'test_token')
     monkeypatch.setenv('ANTHROPIC_API_KEY', 'test_key')
     
@@ -170,8 +174,15 @@ async def test_run_agent_handles_fetch_error_gracefully(mock_fetch_recent, mock_
 
     client, channel, user = mock_discord_objects
 
-    # Mock fetch_recent_messages to return empty list (error case)
-    mock_fetch_recent.return_value = []
+    # Create conversation with empty messages
+    conversation = ChannelConversation(
+        channel_id=channel.id,
+        started_at=datetime.now(timezone.utc),
+        last_activity=datetime.now(timezone.utc),
+        messages=[],
+        llm_history=[],
+        participants=set()
+    )
 
     # Mock the agent and its run method
     mock_agent = Mock()
@@ -182,7 +193,7 @@ async def test_run_agent_handles_fetch_error_gracefully(mock_fetch_recent, mock_
     mock_create_agent.return_value = mock_agent
 
     question = "Test question"
-    response, new_messages = await run_agent(question, channel, user, client)
+    response, new_messages = await run_agent(question, channel, user, client, conversation)
 
     # Should still succeed
     assert response == "Response"

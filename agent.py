@@ -6,12 +6,10 @@ from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic import BaseModel, ConfigDict
 from typing import List, Optional
-from datetime import datetime, timedelta, UTC
 import discord
 from config import get_settings
 from tools import fetch_messages_tool, FetchMessagesParams, MessageData
 from conversation import ChannelConversation
-from typing import Optional
 
 
 class AgentContext(BaseModel):
@@ -142,54 +140,12 @@ def create_productivity_agent() -> Agent:
     return agent
 
 
-async def fetch_recent_messages(
-    channel: discord.TextChannel,
-    minutes_back: int,
-    limit: int
-) -> List[MessageData]:
-    """
-    Fetch recent messages from a Discord channel for automatic context.
-
-    Args:
-        channel: Discord text channel to fetch from
-        minutes_back: How many minutes of history to fetch
-        limit: Maximum number of messages to return
-
-    Returns:
-        List of MessageData objects in chronological order (oldest first).
-        Returns empty list on any errors (graceful degradation).
-    """
-    try:
-        # Calculate time window
-        after_time = datetime.now(UTC) - timedelta(minutes=minutes_back)
-
-        # Fetch messages
-        messages = []
-        async for message in channel.history(
-            limit=limit,
-            after=after_time,
-            oldest_first=False
-        ):
-            # Include all messages including bot messages
-            messages.append(MessageData(
-                author=message.author.display_name,
-                timestamp=message.created_at,
-                content=message.content
-            ))
-
-        # Return in chronological order (oldest first)
-        return list(reversed(messages))
-    except Exception:
-        # Graceful degradation: return empty list on any error
-        return []
-
-
 async def run_agent(
     question: str,
     channel: discord.TextChannel,
     user: discord.User,
     discord_client: discord.Client,
-    conversation: Optional[ChannelConversation] = None
+    conversation: ChannelConversation
 ) -> tuple[str, list]:
     """
     Run the productivity agent with a user's question.
@@ -199,30 +155,13 @@ async def run_agent(
         channel: Discord channel where question was asked
         user: Discord user who asked
         discord_client: Discord client for fetching messages
-        conversation: Optional active conversation context
+        conversation: Active conversation context (required)
 
     Returns:
-        Agent's response as a string
+        Tuple of (agent response string, new messages list)
     """
-    # Use conversation messages if available, otherwise fetch recent messages
-    if conversation and conversation.messages:
-        # Convert MessageRecord to MessageData for context
-        recent_messages = [
-            MessageData(
-                author=msg.author,
-                timestamp=msg.timestamp,
-                content=msg.content
-            )
-            for msg in conversation.messages
-        ]
-    else:
-        # Fallback: fetch recent messages for context
-        settings = get_settings()
-        recent_messages = await fetch_recent_messages(
-            channel=channel,
-            minutes_back=settings.recent_context_minutes,
-            limit=settings.recent_context_limit
-        )
+    # Use conversation's accumulated messages
+    recent_messages = conversation.messages
 
     context = AgentContext(
         question=question,
@@ -241,8 +180,8 @@ async def run_agent(
     # Serialize context to JSON
     context_json = context.model_dump_json()
 
-    # Use conversation's LLM history if available
-    message_history = conversation.llm_history if conversation else []
+    # Use conversation's LLM history
+    message_history = conversation.llm_history
 
     result = await agent.run(
         context_json,

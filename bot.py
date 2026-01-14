@@ -14,7 +14,8 @@ from config import get_settings
 from agent import run_agent
 from utils import chunk_message
 from instrumentation import initialize_instrumentation
-from conversation import ConversationManager, ResponseDecider, MessageRecord
+from conversation import ConversationManager, ResponseDecider
+from tools import MessageData, fetch_messages_tool, FetchMessagesParams
 from datetime import datetime, timezone
 
 intents = discord.Intents.default()
@@ -28,7 +29,9 @@ settings = get_settings()
 conversation_manager = ConversationManager(
     timeout_seconds=settings.conversation_timeout_seconds
 )
-response_decider = ResponseDecider()
+response_decider = ResponseDecider(
+    followup_window_seconds=settings.followup_window_seconds
+)
 
 
 @client.event
@@ -79,40 +82,6 @@ async def send_chunked_response(channel: discord.TextChannel, response: str):
         await channel.send(chunk)
 
 
-async def load_recent_messages_for_conversation(
-    channel: discord.TextChannel,
-    limit: int = 20
-) -> list[MessageRecord]:
-    """
-    Load recent messages from channel to initialize conversation context.
-    
-    Args:
-        channel: Discord text channel
-        limit: Maximum number of messages to load
-        
-    Returns:
-        List of MessageRecord objects
-    """
-    messages = []
-    try:
-        async for msg in channel.history(limit=limit, oldest_first=False):
-            # Skip bot's own messages
-            if msg.author == client.user:
-                continue
-            
-            messages.append(MessageRecord(
-                author=msg.author.display_name,
-                author_id=msg.author.id,
-                content=msg.content,
-                timestamp=msg.created_at,
-                is_bot=msg.author.bot
-            ))
-    except Exception:
-        # Graceful degradation: return what we have
-        pass
-    
-    # Return in chronological order (oldest first)
-    return list(reversed(messages))
 
 
 @client.event
@@ -138,21 +107,23 @@ async def on_message(message: Message):
 
     # Check if there's an active conversation
     conversation = conversation_manager.get(channel_id)
-
+    print(f"Conversation: {conversation}")
     if conversation:
+        print(f"Active conversation found in channel: {message.channel.name}")
         # Active conversation exists - record message and check if should respond
-        message_record = MessageRecord(
+        message_data = MessageData(
             author=message.author.display_name,
             author_id=message.author.id,
             content=message.content,
             timestamp=message.created_at,
             is_bot=message.author.bot
         )
-        conversation_manager.record_message(channel_id, message_record)
+        conversation_manager.record_message(channel_id, message_data)
 
         should_respond, reason = response_decider.should_respond(
             message, conversation, bot_user_id
         )
+        print(f"should_respond: {should_respond}, reason: {reason}")
 
         if should_respond:
             # Extract question (remove bot mention if present)
@@ -180,10 +151,9 @@ async def on_message(message: Message):
                     await send_chunked_response(message.channel, response)
 
                     # Record bot response in conversation
-                    if conversation:
-                        # Append new messages to existing history
-                        updated_history = conversation.llm_history + new_messages
-                        conversation_manager.record_bot_response(channel_id, updated_history)
+                    # Append new messages to existing history
+                    updated_history = conversation.llm_history + new_messages
+                    conversation_manager.record_bot_response(channel_id, updated_history)
 
                 except ValueError as e:
                     await send_error_message(
@@ -210,25 +180,34 @@ async def on_message(message: Message):
         should_start, reason = response_decider.should_start_conversation(
             message, bot_user_id
         )
+        print(f"should_start_conversation: {should_start}, reason: {reason}")
 
         if should_start:
             # Load recent messages and start conversation
-            recent_messages = await load_recent_messages_for_conversation(
-                message.channel
-            )
+            # Use fetch_messages_tool with a short time window (1 hour) to get recent context
+            try:
+                params = FetchMessagesParams(
+                    channel_id=channel_id,
+                    hours_back=1,  # Last hour for conversation context
+                    limit=20  # Reasonable limit for initial context
+                )
+                recent_messages = await fetch_messages_tool(params, client)
+            except Exception:
+                # Graceful degradation: start with empty messages
+                recent_messages = []
 
             # Add current message
-            message_record = MessageRecord(
+            message_data = MessageData(
                 author=message.author.display_name,
                 author_id=message.author.id,
                 content=message.content,
                 timestamp=message.created_at,
                 is_bot=message.author.bot
             )
-            recent_messages.append(message_record)
+            recent_messages.append(message_data)
 
             conversation = conversation_manager.start(channel_id, recent_messages)
-
+            print(f"Conversation started in channel: {message.channel.name}")
             # Extract question (remove bot mention if present)
             question = message.content
             for mention in message.mentions:
@@ -254,10 +233,9 @@ async def on_message(message: Message):
                     await send_chunked_response(message.channel, response)
 
                     # Record bot response in conversation
-                    if conversation:
-                        # Append new messages to existing history
-                        updated_history = conversation.llm_history + new_messages
-                        conversation_manager.record_bot_response(channel_id, updated_history)
+                    # Append new messages to existing history
+                    updated_history = conversation.llm_history + new_messages
+                    conversation_manager.record_bot_response(channel_id, updated_history)
 
                 except ValueError as e:
                     await send_error_message(

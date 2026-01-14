@@ -22,8 +22,15 @@ def mock_message(mock_client):
     message = Mock(spec=discord.Message)
     message.author = Mock()
     message.author.id = 111111
+    message.author.display_name = "TestUser"
+    message.author.bot = False
+    message.content = ""
+    message.created_at = None  # Will be set in tests that need it
     message.channel = Mock(spec=discord.TextChannel)
+    message.channel.id = 123456
     message.channel.send = AsyncMock()
+    message.channel.guild = Mock()
+    message.channel.guild.text_channels = []
 
     # Create async context manager for typing
     typing_context = AsyncMock()
@@ -32,6 +39,7 @@ def mock_message(mock_client):
     message.channel.typing = Mock(return_value=typing_context)
 
     message.mentions = []
+    message.reference = None
     return message
 
 
@@ -68,11 +76,10 @@ async def test_responds_to_mention(mock_client, mock_message, monkeypatch):
     import config
     config._settings = None
 
+    from datetime import datetime, timezone
     mock_message.content = f"<@{mock_client.user.id}> What did we discuss?"
     mock_message.mentions = [mock_client.user]
-
-    # Setup mock for guild.text_channels to avoid iteration error
-    mock_message.channel.guild.text_channels = []
+    mock_message.created_at = datetime.now(timezone.utc)
 
     with patch('bot.client', mock_client), \
          patch('bot.run_agent', new_callable=AsyncMock) as mock_agent:
@@ -94,11 +101,10 @@ async def test_handles_empty_question(mock_client, mock_message, monkeypatch):
     import config
     config._settings = None
 
+    from datetime import datetime, timezone
     mock_message.content = f"<@{mock_client.user.id}>"
     mock_message.mentions = [mock_client.user]
-
-    # Setup mock for guild.text_channels to avoid iteration error
-    mock_message.channel.guild.text_channels = []
+    mock_message.created_at = datetime.now(timezone.utc)
 
     with patch('bot.client', mock_client), \
          patch('bot.run_agent', new_callable=AsyncMock) as mock_agent:

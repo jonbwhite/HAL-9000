@@ -12,8 +12,10 @@ from config import get_settings
 class MessageData(BaseModel):
     """Structured representation of a Discord message."""
     author: str
+    author_id: int
     timestamp: datetime
     content: str
+    is_bot: bool = False
 
     def __str__(self) -> str:
         """Format message for display to AI."""
@@ -81,8 +83,10 @@ async def fetch_messages_tool(
         if not message.author.bot:
             messages.append(MessageData(
                 author=message.author.display_name,
+                author_id=message.author.id,
                 timestamp=message.created_at,
-                content=message.content
+                content=message.content,
+                is_bot=message.author.bot
             ))
 
     # Return in chronological order (oldest first)
